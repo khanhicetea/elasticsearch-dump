@@ -11,9 +11,11 @@ Tools for moving and saving indicies.
 
 [![Build Status](https://secure.travis-ci.org/taskrabbit/elasticsearch-dump.png?branch=master)](http://travis-ci.org/taskrabbit/elasticsearch-dump)  [![Code Climate](https://codeclimate.com/github/taskrabbit/elasticsearch-dump/badges/gpa.svg)](https://codeclimate.com/github/taskrabbit/elasticsearch-dump)
 
-## Version `1.0.0` Warning!
+## Version Warnings!
 
-Version `1.0.0` of Elasticdump changes the format of the files created by the dump.  Files created with version `0.x.x` of this tool are likely not to work with versions going forward.  To learn more about the breaking changes, vist the release notes for version [`1.0.0`](https://github.com/taskrabbit/elasticsearch-dump/releases/tag/v1.0.0).  If you recive an "out of memory" error, this is probaly the cause.
+- Version `1.0.0` of Elasticdump changes the format of the files created by the dump.  Files created with version `0.x.x` of this tool are likely not to work with versions going forward.  To learn more about the breaking changes, vist the release notes for version [`1.0.0`](https://github.com/taskrabbit/elasticsearch-dump/releases/tag/v1.0.0).  If you recive an "out of memory" error, this is probaly the cause.
+- Version `2.0.0` of Elasticdump removes the `bulk` options.  These options were buggy, and differ between versions of Elasticsearch.  If you need to export multiple indexes, look for the `multielasticdump` section of the tool.
+- Version `2.1.0` of Elasticdump moves from using `scan/scroll` (ES 1.x) to just `scan` (ES 2.x).  This is a backwards-compatible change within Elasticsearch, but performance may suffer on Elasticsearch versions prior to 2.x.
 
 ## Installing
 
@@ -80,16 +82,6 @@ elasticdump \
   --output=$ \
   | gzip > /data/my_index.json.gz
 
-# Backup ALL indices, then use Bulk API to populate another ES cluster:
-elasticdump \
-  --all=true \
-  --input=http://production-a.es.com:9200/ \
-  --output=/data/production.json
-elasticdump \
-  --bulk=true \
-  --input=/data/production.json \
-  --output=http://production-b.es.com:9200/
-
 # Backup the results of a query to a file
 elasticdump \
   --input=http://production.es.com:9200/my_index \
@@ -131,51 +123,28 @@ elasticdump \
   --output=http://es.com:9200/api/search \
   --output-index=my_index \
   --type=mapping
-
-# Backup ALL indices, then use Bulk API to populate another ES cluster:
-# Notice, the single `/` is required to specify all indices.
-elasticdump \
-  --all=true \
-  --input=http://production-a.es.com:9200/api/search \
-  --input-index=/ \
-  --output=/data/production.json
-elasticdump \
-  --bulk=true \
-  --input=/data/production.json \
-  --output=http://production-b.es.com:9200/api/search \
-  --output-index=/
 ```
 
 ### Docker install
-If you prefer using docker to use elasticdump, you can clone this git repo and run :
+If you prefer using docker to use elasticdump, you can download this project from docker hub :
 ```bash
-docker build -t elasticdump .
+docker pull taskrabbit/elasticsearch-dump
 ```
 Then you can use it just by :
-- using `docker run --rm -ti elasticdump`
+- using `docker run --rm -ti taskrabbit/elasticsearch-dump`
 - remembering that you cannot use `localhost` or `127.0.0.1` as you ES host ;)
 - you'll need to mount your file storage dir `-v <your dumps dir>:<your mount point>` to your docker container
 
 Example:
 ```bash
 # Copy an index from production to staging with mappings:
-docker run --rm -ti elasticdump \
+docker run --rm -ti taskrabbit/elasticsearch-dump \
   --input=http://production.es.com:9200/my_index \
   --output=http://staging.es.com:9200/my_index \
   --type=mapping
-docker run --rm -ti elasticdump \
+docker run --rm -ti taskrabbit/elasticsearch-dump \
   --input=http://production.es.com:9200/my_index \
   --output=http://staging.es.com:9200/my_index \
-  --type=data
-
-# Backup index data to a file (ie : stored in /tmp/myESdumps) :
-docker run --rm -ti -v /tmp/myESdumps:/data elasticdump \
-  --input=http://production.es.com:9200/my_index \
-  --output=/data/my_index_mapping.json \
-  --type=mapping
-docker run --rm -ti -v /tmp/myESdumps:/data elasticdump \
-  --input=http://production.es.com:9200/my_index \
-  --output=/data/my_index.json \
   --type=data
 ```
 
@@ -183,6 +152,7 @@ docker run --rm -ti -v /tmp/myESdumps:/data elasticdump \
 
 ```
 elasticdump: Import and export tools for elasticsearch
+version: %%version%%
 
 Usage: elasticdump --input SOURCE --output DESTINATION [OPTIONS]
 
@@ -197,15 +167,18 @@ Usage: elasticdump --input SOURCE --output DESTINATION [OPTIONS]
                     Destination index and type
                     (default: all, example: index/type)
 --limit
-                    How many objects to move in bulk per operation
+                    How many objects to move in batch per operation
                     limit is approximate for file streams
                     (default: 100)
 --debug
                     Display the elasticsearch commands being used
                     (default: false)
+--quiet
+                    Suppress all messages except for errors
+                    (default: false)
 --type
                     What are we exporting?
-                    (default: data, options: [data, mapping])
+                    (default: data, options: [analyzer, data, mapping])
 --delete
                     Delete documents one-by-one from the input as they are
                     moved.  Will not delete the source index
@@ -219,12 +192,6 @@ Usage: elasticdump --input SOURCE --output DESTINATION [OPTIONS]
                     Normal: {"_index":"","_type":"","_id":"", "_source":{SOURCE}}
                     sourceOnly: {SOURCE}
                     (default: false)
---all
-                    Load/store documents from ALL indexes
-                    (default: false)
---bulk
-                    Leverage elasticsearch Bulk API when writing documents
-                    (default: false)
 --ignore-errors
                     Will continue the read/write loop on write error
                     (default: false)
@@ -236,26 +203,13 @@ Usage: elasticdump --input SOURCE --output DESTINATION [OPTIONS]
                     (default:
                       5 [node <= v0.10.x] /
                       Infinity [node >= v0.11.x] )
---bulk-mode
-                    The mode can be index, delete or update.
-                    'index': Add or replace documents on the destination index.
-                    'delete': Delete documents on destination index.
-                    'update': Use 'doc_as_upsert' option with bulk update API to do partial update.
-                    (default: index)
---bulk-use-output-index-name
-                    Force use of destination index name (the actual output URL)
-                    as destination while bulk writing to ES. Allows
-                    leveraging Bulk API copying data inside the same
-                    elasticsearch instance.
-                    (default: false)
 --timeout
                     Integer containing the number of milliseconds to wait for
                     a request to respond before aborting the request. Passed
-                    directly to the request library. If used in bulk writing,
-                    it will result in the entire batch not being written.
-                    Mostly used when you don't care too much if you lose some
-                    data when importing but rather have speed.
---skip
+                    directly to the request library. Mostly used when you don't
+                    care too much if you lose some data when importing
+                    but rather have speed.
+--offset
                     Integer containing the number of rows you wish to skip
                     ahead from the input transport.  When importing a large
                     index, things can go wrong, be it connectivity, crashes,
@@ -269,6 +223,7 @@ Usage: elasticdump --input SOURCE --output DESTINATION [OPTIONS]
                     you want to get most data as possible in the index
                     without concern for losing some rows in the process,
                     similar to the `timeout` option.
+                    (default: 0)
 --inputTransport
                     Provide a custom js file to us as the input transport
 --outputTransport
@@ -277,17 +232,39 @@ Usage: elasticdump --input SOURCE --output DESTINATION [OPTIONS]
                     When using a custom outputTransport, should log lines
                     be appended to the output stream?
                     (default: true, except for `$`)
+--awsAccessKeyId
+--awsSecretAccessKey
+                    When using Amazon Elasticsearch Service proteced by
+                    AWS Identity and Access Management (IAM), provide
+                    your Access Key ID and Secret Access Key
 --help
                     This page
 ```
 
-## Elasticsearch's scan and scroll method
-Elasticsearch provides a scan and scroll method to fetch all documents of an index. This method is much safer to use since
-it will maintain the result set in cache for the given period of time. This means it will be a lot faster to export the data
-and more important it will keep the result set in order. While dumping the result set in batches it won't export duplicate
-documents in the export. All documents in the export will unique and therefore no missing documents.
+## Elasticsearch's Scroll API
+Elasticsearch provides a [scroll](https://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-scroll.html) API to fetch all documents of an index starting form (and keeping) a consistent snapshot in time, which we use under the hood.  This method is safe to use for large exports since it will maintain the result set in cache for the given period of time.
 
-NOTE: only works for output
+NOTE: only works for `--output`
+
+## MultiElasticDump
+This package also ships with a second binary, `multielasticdump`.  This is a wrapper for the normal elasticdump binary, which provides a limited option set, but will run elasticdump in parallel across many indexes at once.  It runs a process which forks into `n` (default your running host's # of CPUs) subprocesses running elasticdump.
+
+The limited option set includes:
+
+- `parallel`:   `os.cpus()`,
+- `match`:      `'^.*$'`,
+- `input`:      `null`,
+- `output`:     `null`,
+- `scrollTime`: `'10m'`,
+- `limit`:      `100`,
+- `offset`:     `100`,
+- `direction`:   `dump`
+
+If the `--direction` is `dump`, which is the default, `--input` MUST be a URL for the base location of an ElasticSearch server (i.e. `http://localhost:9200`) and `--output` MUST be a directory. Each index that does match will have a data, mapping, and analyzer file created.
+
+For loading files that you have dumped from multielasticsearch, `--direction` should be set to `load`, `--input` MUST be a directory of a multielasticsearch dump and `--output` MUST be a Elasticsearch server URL.
+
+The new options, `--parallel` is how many forks should be run simultaneously and `--match` is used to filter which indexes should be dumped/loaded (regex).
 
 ## Notes
 
@@ -296,11 +273,10 @@ NOTE: only works for output
 - when exporting from elasticsearch, you can have export an entire index (`--input="http://localhost:9200/index"`) or a type of object from that index (`--input="http://localhost:9200/index/type"`).  This requires ElasticSearch 1.2.0 or higher
 - If elasticsearch is in a sub-directory, index and type must be provided with a separate argument (`--input="http://localhost:9200/sub/directory --input-index=index/type"`). Using `--input-index=/` will include all indices and types.
 - we are using the `put` method to write objects.  This means new objects will be created and old objects with the same ID will be updated
-- the `file` transport will overwrite any existing files
+- the `file` transport will not overwrite any existing files, it will throw an exception of the file already exists
 - If you need basic http auth, you can use it like this: `--input=http://name:password@production.es.com:9200/my_index`
 - if you choose a stdio output (`--output=$`), you can also request a more human-readable output with `--format=human`
 - if you choose a stdio output (`--output=$`), all logging output will be suppressed
-- when using the `--bulk` option, aliases will be ignored and the documents you write will be linked thier original index name.  For example if you have an alias "events" which contains "events-may-2015" and "events-june-2015" and you bulk dump from one ES cluster to another `elasticdump --bulk --import http://localhost:9200/events --output http://other-server:9200`, you will have the source indicies, "events-may-2015" and "events-june-2015", and not "events".
 
 Inspired by https://github.com/crate/elasticsearch-inout-plugin and https://github.com/jprante/elasticsearch-knapsack
 

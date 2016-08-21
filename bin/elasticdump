@@ -3,34 +3,33 @@
 var argv        = require('optimist').argv;
 var util        = require('util');
 var elasticdump = require( __dirname + "/../elasticdump.js" ).elasticdump;
+var packageData = require(__dirname + '/../package.json');
 
 // For future developers.  If you add options here, be sure to add the option to test suite tests where necessary
 var defaults = {
-  limit:           100,
-  offset:          0,
-  debug:           false,
-  type:            'data',
-  delete:          false,
-  all:             false,
-  bulk:            false,
-  maxSockets:      null,
-  input:           null,
-  'input-index':   null,
-  output:          null,
-  'output-index':  null,
-  inputTransport:  null,
-  outputTransport: null,
-  searchBody:      null,
-  sourceOnly:      false,
-  jsonLines:       false,
-  format:          '',
-  'ignore-errors': false,
-  scrollTime:      '10m',
-  'bulk-use-output-index-name': false,
-  'bulk-mode':     'index',
-  timeout:         null,
-  skip:            null,
-  toLog:           null,
+  limit:              100,
+  offset:             0,
+  debug:              false,
+  type:               'data',
+  delete:             false,
+  maxSockets:         null,
+  input:              null,
+  'input-index':      null,
+  output:             null,
+  'output-index':     null,
+  inputTransport:     null,
+  outputTransport:    null,
+  searchBody:         null,
+  sourceOnly:         false,
+  jsonLines:          false,
+  format:             '',
+  'ignore-errors':    false,
+  scrollTime:         '10m',
+  timeout:            null,
+  toLog:              null,
+  quiet:              false,
+  awsAccessKeyId:     null,
+  awsSecretAccessKey: null,
 };
 
 var options = {};
@@ -51,25 +50,35 @@ for(var i in defaults){
 var log = function(type, message){
   if(type === 'debug'){
     if(options.debug === true){
-      message = "[debug] | " + message;
+      message = new Date().toUTCString() + " [debug] | " + message;
+      console.log(message);
     }else{
       return false;
     }
-  }else{
+  }else if(type === 'error'){
     message = (new Date().toUTCString()) + " | " + message;
+    console.error(message);
+  }else if(options.quiet === false){
+    message = (new Date().toUTCString()) + " | " + message;
+    console.log(message);
+  }else{
+    return false;
   }
-  console.log(message);
 };
 
 if(argv.help === true){
   var helpText = require('fs').readFileSync( __dirname + '/../lib/help.txt');
-  console.log(String(helpText));
+  helpText = helpText.toString();
+  helpText = helpText.replace('%%version%%', packageData.version);
+  console.log(helpText);
+}else if (argv.version === true){
+  console.log(packageData.version)
 }else{
   var dumper = new elasticdump(options.input, options.output, options);
 
   dumper.on('log',   function(message){ log('log',   message); });
   dumper.on('debug', function(message){ log('debug', message); });
-  dumper.on('error', function(error){   log('log', 'Error Emitted => ' + ( error.message || JSON.stringify(error)) ); });
+  dumper.on('error', function(error){   log('error', 'Error Emitted => ' + ( error.message || JSON.stringify(error)) ); });
 
   dumper.dump(function(error, total_writes){
     if(error){
